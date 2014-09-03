@@ -1,0 +1,3 @@
+#!/bin/bash -uxe
+
+gdb -x run.gdb ../julia/usr/bin/julia-debug
