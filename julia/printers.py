@@ -1,24 +1,50 @@
+################################################################################
+# Configuration
+#
+
 import gdb
 
 import re
-r_julia_pointer = re.compile("^_?jl_\w+_t \*$")
 
-from sys import stderr
-def print_err(*args):
-    stderr.write(' '.join(map(str,args)) + '\n')
 
-# Try to use the new-style pretty-printing if available.
-_use_gdb_pp = True
-try:
-    import gdb.printing
-except ImportError:
-    _use_gdb_pp = False
+
+################################################################################
+# Auxiliary
+#
 
 visited = set()
+
 void_ptr = gdb.lookup_type('void').pointer()
+
+def get_typename(type):
+    # If it points to a reference, get the reference.
+    if type.code == gdb.TYPE_CODE_REF:
+        type = type.target()
+
+    # Get the unqualified type, stripped of typedefs.
+    type = type.unqualified().strip_typedefs()
+
+    if type.code == gdb.TYPE_CODE_PTR:
+        return str(type)
+
+    return str(type.tag)
 
 def is_pointer(v):
     return (v.type.code == gdb.TYPE_CODE_PTR)
+
+r_jl_type = re.compile("^_?jl_\w+_t$")
+
+def is_julia_type(t):
+    return r_jl_type.match(get_typename(t))
+
+def is_julia_pointer(v):
+    return is_pointer(v) and is_julia_type(v.type.target())
+
+
+
+################################################################################
+# Printers
+#
 
 class CastingPrinter:
     def __init__(self, type_name, val):
@@ -65,6 +91,7 @@ class CastingPrinter:
     def display_hint(self):
         return 'string'
 
+
 class Decorator(object):
     def __init__(self, type_name, function):
         super(Decorator, self).__init__()
@@ -76,6 +103,7 @@ class Decorator(object):
         if not self.enabled:
             return None
         return self.function(self.type_name, value)
+
 
 # A pretty-printer that conforms to the "PrettyPrinter" protocol from
 # gdb.printing.  It can also be used directly as an old-style printer.
@@ -107,31 +135,17 @@ class Printer(object):
 
             self.types[str(jl_type_address)] = jl_type_name
 
-    @staticmethod
-    def get_basic_type(type):
-        # If it points to a reference, get the reference.
-        if type.code == gdb.TYPE_CODE_REF:
-            type = type.target()
-
-        # Get the unqualified type, stripped of typedefs.
-        type = type.unqualified().strip_typedefs()
-
-        if type.code == gdb.TYPE_CODE_PTR:
-            return str(type)
-
-        return type.tag
-
     def __call__(self, val):
-        typename = self.get_basic_type(val.type)
+        typename = get_typename(val.type)
         if typename == None:
             return None
 
         # Dereference jl pointers
-        if r_julia_pointer.match(typename):
+        if is_julia_pointer(val):
             val = val.dereference()
-            typename = self.get_basic_type(val.type)
+            typename = get_typename(val.type)
         # TODO: replace _jl_datatype_t with actual string type
-        if typename != "_jl_value_t":
+        if not is_julia_type(val.type):
             return None
         if len(self.types) < 1:
             self.resolve_typevar_names()
@@ -148,11 +162,22 @@ class Printer(object):
             return self.lookup[jl_type_name].invoke(val)
 
         # Cannot find a pretty printer.  Return None.
-        print("none...")
-        print(self.types)
         return None
 
-julia_so = None
+
+
+
+################################################################################
+# Initialization
+#
+
+# Try to use the new-style pretty-printing if available.
+_use_gdb_pp = True
+try:
+    import gdb.printing
+except ImportError:
+    _use_gdb_pp = False
+
 julia_printer = None
 
 def register_julia_printers(obj):
@@ -170,7 +195,6 @@ def register_julia_printers(obj):
 
 def build_julia_typemap():
     global julia_printer
-    global julia_so
 
     julia_printer = Printer("julia")
 
