@@ -14,6 +14,11 @@ try:
 except ImportError:
     _use_gdb_pp = False
 
+visited = set()
+void_ptr = gdb.lookup_type('void').pointer()
+
+def is_pointer(v):
+    return (v.type.code == gdb.TYPE_CODE_PTR)
 
 class CastingPrinter:
     def __init__(self, type_name, val):
@@ -22,18 +27,40 @@ class CastingPrinter:
 
         type_symbol, _ = gdb.lookup_symbol(type_name)
         if type_symbol is None:
-            throw("Could not find type!")
+            raise gdb.GdbError("Could not find type!")
         self.type = type_symbol.type
 
-        self.casted_val = self.val.cast(self.type)  
+        self.casted_val = self.val.cast(self.type)
 
     def to_string(self):
         return self.type_name
 
     def children(self):
+        # blacklist the current value its address
+        # to avoid pointer recursion
+        global visited
+        self.pointer = long(self.val.address.cast(void_ptr))
+        visited.add(self.pointer)
+
         for key in self.type.fields():
-            if key.name != "type":
-                yield key.name, self.casted_val[key.name]
+            val = self.casted_val[key.name]
+            if is_pointer(val) and val.type != void_ptr:
+                # if the field is a pointer, check whether it points to any parent
+                # NOTE: void pointers will never be pretty-printed
+                pointer = long(val.dereference().address.cast(void_ptr))
+                if pointer == 0:
+                    yield key.name, "0x0"
+                elif pointer not in visited:
+                    yield key.name, val
+                elif pointer == self.pointer:
+                    yield key.name, "<self>"
+                else:
+                    yield key.name, "<...>"
+            else:
+                # just stringify the plain value
+                yield key.name, val
+
+        visited.remove(self.pointer)
 
     def display_hint(self):
         return 'string'
@@ -75,7 +102,7 @@ class Printer(object):
             # from the 'type' field in jl_value_t
             jl_typevar, _ = gdb.lookup_symbol(jl_typevar_name)
             if jl_typevar is None:
-                throw("Could not find type variable!")
+                raise gdb.GdbError("Could not find type variable!")
             jl_type_address = jl_typevar.value()
 
             self.types[str(jl_type_address)] = jl_type_name
@@ -99,6 +126,10 @@ class Printer(object):
         if typename == None:
             return None
 
+        # Dereference jl pointers
+        if r_julia_pointer.match(typename):
+            val = val.dereference()
+            typename = self.get_basic_type(val.type)
         # TODO: replace _jl_datatype_t with actual string type
         if typename != "_jl_value_t":
             return None
@@ -106,7 +137,6 @@ class Printer(object):
             self.resolve_typevar_names()
 
         # Look-up the address in the type field
-        void_ptr = gdb.lookup_type('void').pointer()
         jl_type_address = val["type"].dereference().address.cast(void_ptr)
 
         # Match the type field with a global type variable
