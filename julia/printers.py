@@ -14,8 +14,7 @@ import sys, traceback
 #
 
 visited = set()
-
-void_ptr = gdb.lookup_type('void').pointer()
+void_ptr = None
 
 def get_typename(type):
     # If it points to a reference, get the reference.
@@ -26,6 +25,11 @@ def get_typename(type):
     type = type.unqualified()
 
     return str(type)
+
+def get_pointer_address(p):
+    assert p.type.code == gdb.TYPE_CODE_PTR
+
+    return long(p.cast(void_ptr))
 
 def is_pointer(v):
     return (v.type.code == gdb.TYPE_CODE_PTR)
@@ -69,7 +73,7 @@ class CastingPrinter:
         # blacklist the current value its address
         # to avoid pointer recursion
         global visited
-        self.pointer = long(self.val.address.cast(void_ptr))
+        self.pointer = get_pointer_address(self.val.address)
         visited.add(self.pointer)
 
         for key in self.cast_type.fields():
@@ -83,7 +87,7 @@ class CastingPrinter:
             if is_pointer(val) and val.type != void_ptr:
                 # if the field is a pointer, check whether it points to any parent
                 # NOTE: void pointers will never be pretty-printed
-                pointer = long(val.dereference().address.cast(void_ptr))
+                pointer = get_pointer_address(val)
                 # TODO: val.value()?
                 # TODO: replace etype child with actual type?
                 if pointer == 0:
@@ -91,9 +95,9 @@ class CastingPrinter:
                 elif pointer not in visited:
                     yield key.name, val
                 elif pointer == self.pointer:
-                    yield key.name, "self"
+                    yield key.name, "<self>"
                 else:
-                    yield key.name, "parent"
+                    yield key.name, "<...>"
             else:
                 # just stringify the plain value
                 yield key.name, val
@@ -129,6 +133,25 @@ class Printer(object):
         self.typevars = {}
         self.types = {}
         self.enabled = True
+        self.initialized = False
+
+    def __deferred__init__(self):
+        # Save the frequently-used 'void *' type, which is expensive to look-up
+        global void_ptr
+        void_ptr = gdb.lookup_type('void').pointer()
+
+        # Resolve typename variables
+        for typevar_name, jl_type_name in self.typevars.iteritems():
+            # Find the variable which points to our type, and is referred to
+            # from the 'type' field in jl_value_t
+            jl_typevar, _ = gdb.lookup_symbol(typevar_name)
+            if jl_typevar is None:
+                raise gdb.GdbError("Could not find type variable!")
+            jl_type_address = jl_typevar.value()
+
+            self.types[long(jl_type_address)] = jl_type_name
+
+        self.initialized = True;
 
     def add(self, typevar_name, cast_type_name, print_type_name="", function=CastingPrinter):
         '''
@@ -149,17 +172,6 @@ class Printer(object):
         self.subprinters.append(printer)
         self.printers[print_type_name] = printer
 
-    def resolve_typevar_names(self):
-        for typevar_name, jl_type_name in self.typevars.iteritems():
-            # Find the variable which points to our type, and is referred to
-            # from the 'type' field in jl_value_t
-            jl_typevar, _ = gdb.lookup_symbol(typevar_name)
-            if jl_typevar is None:
-                raise gdb.GdbError("Could not find type variable!")
-            jl_type_address = jl_typevar.value()
-
-            self.types[long(jl_type_address)] = jl_type_name
-
     def resolve_julia_typename(self, val):
         # Check the type
         if not is_julia_type(val.type):
@@ -171,20 +183,20 @@ class Printer(object):
         except:
             # This jl_t doesn't have a type field (e.g. jl_fptr_t, ...)...
             return None
-        jl_type_address = typefield.dereference().address.cast(void_ptr)
+        jl_type_address = get_pointer_address(typefield)
 
         # Match the type field with a global type variable
-        if long(jl_type_address) in self.types:
+        if jl_type_address in self.types:
             # Find the actual type
-            jl_type_name = self.types[long(jl_type_address)]
+            jl_type_name = self.types[jl_type_address]
             return jl_type_name
         else:
             return None
 
     def __call__(self, val):
         # Deferred resolving of type addresses
-        if len(self.types) < 1:
-            self.resolve_typevar_names()
+        if not self.initialized:
+            self.__deferred__init__()
 
         typename = get_typename(val.type)
         if typename == None:
