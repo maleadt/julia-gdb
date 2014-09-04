@@ -6,6 +6,7 @@ import gdb
 
 import re
 
+import sys, traceback
 
 
 ################################################################################
@@ -21,13 +22,10 @@ def get_typename(type):
     if type.code == gdb.TYPE_CODE_REF:
         type = type.target()
 
-    # Get the unqualified type, stripped of typedefs.
-    type = type.unqualified().strip_typedefs()
+    # Get the unqualified type
+    type = type.unqualified()
 
-    if type.code == gdb.TYPE_CODE_PTR:
-        return str(type)
-
-    return str(type.tag)
+    return str(type)
 
 def is_pointer(v):
     return (v.type.code == gdb.TYPE_CODE_PTR)
@@ -35,7 +33,7 @@ def is_pointer(v):
 r_jl_type = re.compile("^_?jl_\w+_t$")
 
 def is_julia_type(t):
-    return r_jl_type.match(get_typename(t))
+    return (r_jl_type.match(get_typename(t)) != None)
 
 def is_julia_pointer(v):
     return is_pointer(v) and is_julia_type(v.type.target())
@@ -133,7 +131,7 @@ class Printer(object):
                 raise gdb.GdbError("Could not find type variable!")
             jl_type_address = jl_typevar.value()
 
-            self.types[str(jl_type_address)] = jl_type_name
+            self.types[long(jl_type_address)] = jl_type_name
 
     def __call__(self, val):
         typename = get_typename(val.type)
@@ -151,12 +149,17 @@ class Printer(object):
             self.resolve_typevar_names()
 
         # Look-up the address in the type field
-        jl_type_address = val["type"].dereference().address.cast(void_ptr)
+        try:
+            typefield = val["type"]
+        except:
+            # Our jl_t doesn't have a type field...
+            return None
+        jl_type_address = typefield.dereference().address.cast(void_ptr)
 
         # Match the type field with a global type variable
-        if str(jl_type_address) in self.types:
+        if long(jl_type_address) in self.types:
             # Find the actual type
-            jl_type_name = self.types[str(jl_type_address)]
+            jl_type_name = self.types[long(jl_type_address)]
 
             # Expand it
             return self.lookup[jl_type_name].invoke(val)

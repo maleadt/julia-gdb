@@ -13,7 +13,7 @@ define hook-quit
 end
 
 set breakpoint pending on
-break emit_function if ((int)strcmp(lam->name->name,"foobar")) == 0
+break emit_function if ((int)strcmp(lam->name->name, "foobar")) == 0
 
 run run.jl
 
