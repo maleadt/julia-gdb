@@ -20,5 +20,4 @@ run run.jl
 # Skip 10 lines to uncompress the AST
 next 10
 
-print *ast
-print *(jl_expr_t*)ast
+print ast
