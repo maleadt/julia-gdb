@@ -134,8 +134,16 @@ class Printer(object):
         self.types = {}
         self.enabled = True
         self.initialized = False
+        self.enabled = True
 
     def __deferred__init__(self):
+        # Do we even julia?
+        try:
+            gdb.lookup_type('jl_value_t')
+        except:
+            self.enabled = False
+            return
+
         # Save the frequently-used 'void *' type, which is expensive to look-up
         global void_ptr
         void_ptr = gdb.lookup_type('void').pointer()
@@ -151,7 +159,7 @@ class Printer(object):
 
             self.types[long(jl_type_address)] = jl_type_name
 
-        self.initialized = True;
+        self.initialized = True
 
     def add(self, typevar_name, cast_type_name, print_type_name="", function=CastingPrinter):
         '''
@@ -194,18 +202,16 @@ class Printer(object):
             return None
 
     def __call__(self, val):
+        if not self.enabled:
+            return None
+
         # Deferred resolving of type addresses
         if not self.initialized:
             self.__deferred__init__()
 
-        typename = get_typename(val.type)
-        if typename == None:
-            return None
-
         # Dereference pointers
         if is_julia_pointer(val):
             val = val.dereference()
-            typename = get_typename(val.type)
 
         # Get the actual typename
         jl_type_name = self.resolve_julia_typename(val)
