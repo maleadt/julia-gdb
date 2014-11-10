@@ -53,8 +53,6 @@ blacklist = {
     'jl_datatype_t': ['instance', 'parameters', 'super']    # TODO: remove the jl_datatype_t blacklists when we resolve them to strings
 }
 
-# http://tromey.com/blog/?p=546
-
 class CastingPrinter:
     def __init__(self, cast_type_name, print_type_name, val):
         self.val = val
