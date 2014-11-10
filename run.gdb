@@ -1,3 +1,6 @@
+set print pretty on
+
+
 python
 
 sys.path.insert(0, '.')
