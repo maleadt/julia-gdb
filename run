@@ -1,3 +1,4 @@
 #!/bin/bash -uxe
 
-gdb --quiet -x run.gdb ../julia/usr/bin/julia-debug "$@"
+which julia-debug || { echo "ERROR: could not find julia-debug" >&2; exit 1; }
+gdb --quiet -x run.gdb julia-debug "$@"

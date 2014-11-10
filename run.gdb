@@ -1,7 +1,6 @@
 python
 
 sys.path.insert(0, '.')
-
 from julia.printers import register_julia_printers
 register_julia_printers(None)
 
